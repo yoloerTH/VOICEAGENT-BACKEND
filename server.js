@@ -180,11 +180,11 @@ io.on('connection', (socket) => {
             isAborted: () => aborted
           }
 
+          // Set AI speaking flag BEFORE starting response (for barge-in detection)
+          aiSpeaking = true
+
           // Start pipelined response
           handleUserMessage(socket, session, transcriptBuffer, currentPipeline)
-            .then(() => {
-              aiSpeaking = true
-            })
             .finally(() => {
               // Reset for next turn
               llmStarted = false

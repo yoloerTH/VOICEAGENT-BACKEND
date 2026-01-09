@@ -128,7 +128,7 @@ You can explain features, understand needs, connect with specialists, and schedu
     const stream = await this.client.chat.completions.create({
       model: this.model,
       messages: messages,
-      max_completion_tokens: 500,
+      max_completion_tokens: 333,
       stream: true
     })
 
@@ -210,7 +210,7 @@ You can explain features, understand needs, connect with specialists, and schedu
     const completion = await this.client.chat.completions.create({
       model: this.model,
       messages: messages,
-      max_completion_tokens: 500,
+      max_completion_tokens: 333,
       stream: streaming
     })
 
