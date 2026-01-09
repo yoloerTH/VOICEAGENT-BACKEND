@@ -82,12 +82,14 @@ Response structure:
 Your capabilities:
 - Answer questions about Apex Solutions
 - Help customers understand our platform
-- Book appointments and demos using the book_appointment function
+- Book appointments and demos
 
-When booking:
-- First say "Hold on, let me register that for you"
-- Then call the book_appointment function with the details
-- After booking, confirm what was registered`
+When user wants to book:
+- Collect: name, date/time, what they want
+- Once you have everything, say ONLY: "Hold on, let me register that for you"
+- Then use the book_appointment tool (system will handle the rest)
+- DO NOT output JSON, function names, or technical details
+- DO NOT say what you're registering yet - wait for system confirmation`
     }
 
     const messages = [systemPrompt, ...conversationHistory]
@@ -137,6 +139,7 @@ When booking:
 
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta
+      const finishReason = chunk.choices[0]?.finish_reason
 
       // Handle tool calls
       if (delta?.tool_calls) {
@@ -145,20 +148,23 @@ When booking:
         if (tc.id) {
           toolCallId = tc.id
           toolName = tc.function?.name
+          console.log('🔧 Tool call starting:', toolName)
         }
 
         if (tc.function?.arguments) {
           argsBuffer += tc.function.arguments
+          console.log('🔧 Tool args chunk:', tc.function.arguments)
         }
       }
 
-      // Handle regular content
+      // Handle regular content (only if not a tool call)
       if (delta?.content) {
         yield delta.content
       }
 
       // Check if we're done and have a tool call
-      if (chunk.choices[0]?.finish_reason === 'tool_calls' && toolCallId) {
+      if (finishReason === 'tool_calls' && toolCallId) {
+        console.log('🔧 Tool call complete:', toolName, argsBuffer)
         toolCall = {
           id: toolCallId,
           name: toolName,
@@ -167,6 +173,8 @@ When booking:
 
         // Yield special marker with tool call info
         yield JSON.stringify({ __tool_call: toolCall })
+      } else if (finishReason) {
+        console.log('✅ Stream finished with reason:', finishReason)
       }
     }
   }
