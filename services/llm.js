@@ -83,7 +83,6 @@ If unsure, ask a brief clarification question.`
       model: this.model,
       messages: messages,
       max_completion_tokens: 500,
-      temperature: 0.5,
       stream: true
     })
 
@@ -120,7 +119,6 @@ If unsure, ask a brief clarification question.`
       model: this.model,
       messages: messages,
       max_completion_tokens: 500,
-      temperature: 0.5,
       stream: streaming
     })
 
