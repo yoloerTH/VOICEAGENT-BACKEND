@@ -25,7 +25,8 @@ export class DeepgramService {
         punctuate: true,
         smart_format: true,
         vad_events: true,
-        interim_results: false
+        interim_results: true,
+        endpointing: 300  // ms of silence before finalizing
       })
 
       // Setup event handlers
@@ -37,10 +38,15 @@ export class DeepgramService {
         try {
           const transcript = data.channel?.alternatives?.[0]?.transcript
 
-          if (transcript && transcript.trim() !== '' && data.is_final) {
-            console.log('Transcript received:', transcript)
+          if (transcript && transcript.trim() !== '') {
+            // Pass full data object for aggressive triggering logic
             if (this.transcriptCallback) {
-              this.transcriptCallback(transcript)
+              this.transcriptCallback({
+                text: transcript,
+                is_final: data.is_final,
+                speech_final: data.speech_final,
+                confidence: data.channel?.alternatives?.[0]?.confidence || 0
+              })
             }
           }
         } catch (error) {

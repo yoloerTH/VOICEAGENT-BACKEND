@@ -7,6 +7,8 @@ import { readFileSync, existsSync } from 'fs'
 import { DeepgramService } from './services/deepgram.js'
 import { LLMService } from './services/llm.js'
 import { CartesiaService } from './services/cartesia.js'
+import { AsyncQueue } from './utils/async-queue.js'
+import { SentenceDetector } from './utils/sentence-detector.js'
 
 dotenv.config()
 
@@ -114,11 +116,83 @@ io.on('connection', (socket) => {
       // Initialize Deepgram
       session.deepgram = new DeepgramService()
 
-      // Setup Deepgram transcript handler
-      session.deepgram.onTranscript((text) => {
-        console.log(`Transcript [${socket.id}]:`, text)
-        socket.emit('transcript', { text })
-        handleUserMessage(socket, session, text)
+      // Aggressive transcript triggering (VAPI-style) with barge-in support
+      let transcriptBuffer = ''
+      let llmStarted = false
+      let aiSpeaking = false
+      let currentPipeline = null
+
+      session.deepgram.onTranscript((data) => {
+        const { text, is_final, speech_final, confidence } = data
+
+        // Update buffer
+        transcriptBuffer = text
+
+        // Log interim vs final
+        if (!is_final) {
+          console.log(`📝 Interim [${socket.id}]: "${text.substring(0, 50)}..." (conf: ${confidence.toFixed(2)})`)
+        } else {
+          console.log(`✅ Final [${socket.id}]: "${text}"`)
+        }
+
+        // BARGE-IN DETECTION: User speaks while AI is speaking
+        if (aiSpeaking && text.trim().length > 5) {
+          console.log(`🛑 BARGE-IN detected [${socket.id}]! Aborting AI response...`)
+
+          // Abort current pipeline
+          if (currentPipeline) {
+            currentPipeline.abort()
+            currentPipeline = null
+          }
+
+          // Signal frontend to stop audio
+          socket.emit('barge-in')
+
+          // Reset state
+          aiSpeaking = false
+          llmStarted = false
+        }
+
+        // Aggressive triggering conditions
+        const shouldTrigger = (
+          // Condition 1: Final transcript (guaranteed)
+          is_final ||
+          // Condition 2: High confidence interim with speech endpoint
+          (!llmStarted && confidence > 0.85 && speech_final) ||
+          // Condition 3: Long stable interim with punctuation
+          (!llmStarted && text.length > 15 && /[.!?]$/.test(text) && confidence > 0.8)
+        )
+
+        if (shouldTrigger && !llmStarted && !aiSpeaking && transcriptBuffer.trim().length > 0) {
+          llmStarted = true
+          console.log(`🚀 Triggering LLM (is_final: ${is_final}, conf: ${confidence.toFixed(2)})`)
+
+          // Send transcript to frontend
+          socket.emit('transcript', { text: transcriptBuffer })
+
+          // Create abortable pipeline controller
+          let aborted = false
+          currentPipeline = {
+            abort: () => {
+              aborted = true
+              console.log('Pipeline abort requested')
+            },
+            isAborted: () => aborted
+          }
+
+          // Start pipelined response
+          handleUserMessage(socket, session, transcriptBuffer, currentPipeline)
+            .then(() => {
+              aiSpeaking = true
+            })
+            .finally(() => {
+              // Reset for next turn
+              llmStarted = false
+              aiSpeaking = false
+              transcriptBuffer = ''
+              currentPipeline = null
+            })
+        }
       })
 
       // Setup Deepgram error handler
@@ -201,8 +275,8 @@ io.on('connection', (socket) => {
   })
 })
 
-// Handle user message and generate AI response
-async function handleUserMessage(socket, session, userMessage) {
+// Handle user message with VAPI-style pipelined streaming
+async function handleUserMessage(socket, session, userMessage, pipeline = null) {
   try {
     // Add user message to conversation history
     session.conversationHistory.push({
@@ -210,30 +284,135 @@ async function handleUserMessage(socket, session, userMessage) {
       content: userMessage
     })
 
-    // Generate AI response
     socket.emit('status', 'AI is thinking...')
-    const aiResponse = await session.llm.generateResponse(session.conversationHistory)
 
-    // Add AI response to conversation history
-    session.conversationHistory.push({
-      role: 'assistant',
-      content: aiResponse
-    })
+    // Create TTS queue for decoupled processing
+    const ttsQueue = new AsyncQueue()
+    const detector = new SentenceDetector()
+    let fullResponse = ''
 
-    // Send text response
-    socket.emit('ai-response', { text: aiResponse })
+    // Start TTS worker in parallel (non-blocking)
+    const ttsWorkerPromise = startTTSWorker(socket, session, ttsQueue, pipeline)
 
-    // Generate and send audio response
-    socket.emit('status', 'AI is speaking...')
-    const audioResponse = await session.cartesia.textToSpeech(aiResponse)
-    socket.emit('audio-response', audioResponse)
+    try {
+      // Stream LLM tokens (never blocks on TTS)
+      console.log('🚀 Starting LLM stream...')
+      for await (const chunk of session.llm.streamResponse(session.conversationHistory)) {
+        // Check if pipeline was aborted (barge-in)
+        if (pipeline && pipeline.isAborted()) {
+          console.log('⚠️ Pipeline aborted during LLM streaming')
+          break
+        }
 
-    socket.emit('status', 'Listening...')
+        fullResponse += chunk
+
+        // Detect complete sentences as tokens arrive
+        const sentences = detector.addChunk(chunk)
+
+        for (const sentence of sentences) {
+          // Check abort before processing sentence
+          if (pipeline && pipeline.isAborted()) {
+            console.log('⚠️ Pipeline aborted during sentence detection')
+            break
+          }
+
+          console.log(`📝 Sentence detected: "${sentence.substring(0, 50)}..."`)
+
+          // Send text to frontend immediately
+          socket.emit('ai-response', { text: sentence, partial: true })
+
+          // Push to TTS queue (fire-and-forget, no await!)
+          ttsQueue.push(sentence)
+        }
+
+        if (pipeline && pipeline.isAborted()) break
+      }
+
+      // Handle any remaining text in buffer
+      const remainder = detector.getRemainder()
+      if (remainder && remainder.length > 0 && (!pipeline || !pipeline.isAborted())) {
+        console.log(`📝 Final fragment: "${remainder.substring(0, 50)}..."`)
+        fullResponse += remainder
+        socket.emit('ai-response', { text: remainder, partial: true })
+        ttsQueue.push(remainder)
+      }
+
+      if (!pipeline || !pipeline.isAborted()) {
+        console.log(`✅ LLM stream complete: "${fullResponse}"`)
+      } else {
+        console.log(`🛑 LLM stream aborted: "${fullResponse}"`)
+      }
+
+    } finally {
+      // Close queue and wait for TTS worker to finish
+      ttsQueue.close()
+      await ttsWorkerPromise
+    }
+
+    // Only add to history if not aborted
+    if (!pipeline || !pipeline.isAborted()) {
+      // Add full response to conversation history
+      session.conversationHistory.push({
+        role: 'assistant',
+        content: fullResponse
+      })
+
+      // Send complete marker
+      socket.emit('ai-response', { text: fullResponse, complete: true })
+      socket.emit('status', 'Listening...')
+    }
 
   } catch (error) {
     console.error(`Error handling message [${socket.id}]:`, error)
     socket.emit('error', { message: 'Failed to generate response' })
     socket.emit('status', 'Error - Please try again')
+  }
+}
+
+// TTS Worker - processes queue sequentially (respects Cartesia concurrency limit)
+async function startTTSWorker(socket, session, ttsQueue, pipeline = null) {
+  console.log('🎙️ TTS worker started')
+  let sentenceCount = 0
+
+  try {
+    for await (const sentence of ttsQueue) {
+      // Check if pipeline was aborted
+      if (pipeline && pipeline.isAborted()) {
+        console.log('🛑 TTS worker aborted')
+        break
+      }
+
+      if (!sentence) break
+
+      sentenceCount++
+      console.log(`🔊 TTS worker processing sentence ${sentenceCount}: "${sentence.substring(0, 30)}..."`)
+
+      // Update status on first sentence
+      if (sentenceCount === 1) {
+        socket.emit('status', 'AI is speaking...')
+      }
+
+      try {
+        // Generate TTS (sequential, one at a time)
+        const audio = await session.cartesia.textToSpeech(sentence)
+
+        // Check abort again before sending audio
+        if (pipeline && pipeline.isAborted()) {
+          console.log('🛑 TTS worker aborted before sending audio')
+          break
+        }
+
+        // Send audio immediately
+        socket.emit('audio-response', audio)
+        console.log(`✅ TTS worker sent audio for sentence ${sentenceCount}`)
+      } catch (err) {
+        console.error(`❌ TTS error for sentence ${sentenceCount}:`, err.message)
+        // Continue processing other sentences
+      }
+    }
+  } finally {
+    const status = (pipeline && pipeline.isAborted()) ? 'aborted' : 'completed'
+    console.log(`🏁 TTS worker ${status} (processed ${sentenceCount} sentences)`)
   }
 }
 

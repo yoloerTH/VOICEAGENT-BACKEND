@@ -1,6 +1,11 @@
 /**
- * Sentence Boundary Detection Utility
+ * Sentence Boundary Detection Utility with Failsafes
  * Detects complete sentences in streaming text for real-time TTS generation
+ *
+ * Three failsafe mechanisms:
+ * 1. Punctuation detection (primary)
+ * 2. Length-based flush (if buffer > 100 chars)
+ * 3. Time-based flush (if > 2 seconds since last flush)
  */
 
 export class SentenceDetector {
@@ -11,6 +16,10 @@ export class SentenceDetector {
     this.sentenceEnders = /[.!?]+/
     // Minimum characters for a valid sentence
     this.minSentenceLength = 10
+    // Failsafe limits
+    this.maxBufferLength = 100  // chars
+    this.maxWaitTime = 2000     // ms
+    this.lastFlush = Date.now()
   }
 
   /**
@@ -25,13 +34,13 @@ export class SentenceDetector {
   }
 
   /**
-   * Extract complete sentences from buffer
+   * Extract complete sentences from buffer with failsafes
    * @returns {string[]} Complete sentences
    */
   extractSentences() {
     const sentences = []
 
-    // Look for sentence boundaries
+    // Failsafe 1: Punctuation detection (primary method)
     let match
     const regex = new RegExp(this.sentenceEnders, 'g')
     let lastIndex = 0
@@ -44,12 +53,32 @@ export class SentenceDetector {
       if (sentence.length >= this.minSentenceLength) {
         sentences.push(sentence)
         lastIndex = endIndex
+        this.lastFlush = Date.now()
       }
     }
 
     // Remove extracted sentences from buffer
     if (lastIndex > 0) {
       this.buffer = this.buffer.substring(lastIndex).trim()
+    }
+
+    // Failsafe 2: Length-based flush (buffer too long)
+    if (this.buffer.length > this.maxBufferLength) {
+      if (this.buffer.trim().length >= this.minSentenceLength) {
+        console.log(`⚠️ Sentence detector: Length failsafe triggered (${this.buffer.length} chars)`)
+        sentences.push(this.buffer.trim())
+        this.buffer = ''
+        this.lastFlush = Date.now()
+      }
+    }
+
+    // Failsafe 3: Time-based flush (waiting too long)
+    const timeSinceLastFlush = Date.now() - this.lastFlush
+    if (timeSinceLastFlush > this.maxWaitTime && this.buffer.length >= this.minSentenceLength) {
+      console.log(`⚠️ Sentence detector: Time failsafe triggered (${timeSinceLastFlush}ms)`)
+      sentences.push(this.buffer.trim())
+      this.buffer = ''
+      this.lastFlush = Date.now()
     }
 
     return sentences
