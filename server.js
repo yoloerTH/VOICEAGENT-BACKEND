@@ -118,15 +118,13 @@ io.on('connection', (socket) => {
 
       // Aggressive transcript triggering (VAPI-style) with barge-in support
       let transcriptBuffer = ''
-      let llmStarted = false
+      let isProcessing = false  // Master lock to prevent concurrent pipelines
       let aiSpeaking = false
       let currentPipeline = null
+      let lastProcessedText = ''  // Track what we've already processed
 
       session.deepgram.onTranscript((data) => {
         const { text, is_final, speech_final, confidence } = data
-
-        // Update buffer
-        transcriptBuffer = text
 
         // Log interim vs final
         if (!is_final) {
@@ -136,7 +134,7 @@ io.on('connection', (socket) => {
         }
 
         // BARGE-IN DETECTION: User speaks while AI is speaking
-        if (aiSpeaking && text.trim().length > 5) {
+        if (aiSpeaking && text.trim().length > 5 && !text.startsWith(lastProcessedText)) {
           console.log(`🛑 BARGE-IN detected [${socket.id}]! Aborting AI response...`)
 
           // Abort current pipeline
@@ -148,9 +146,22 @@ io.on('connection', (socket) => {
           // Signal frontend to stop audio
           socket.emit('barge-in')
 
-          // Reset state
+          // Reset state for new input
           aiSpeaking = false
-          llmStarted = false
+          isProcessing = false
+          transcriptBuffer = text  // Start fresh with new input
+          lastProcessedText = ''
+          return  // Exit early, let next transcript trigger
+        }
+
+        // Only update buffer if not currently processing
+        if (!isProcessing) {
+          transcriptBuffer = text
+        }
+
+        // Skip if already processing or text already processed
+        if (isProcessing || text === lastProcessedText) {
+          return
         }
 
         // Aggressive triggering conditions
@@ -158,17 +169,26 @@ io.on('connection', (socket) => {
           // Condition 1: Final transcript (guaranteed)
           is_final ||
           // Condition 2: High confidence interim with speech endpoint
-          (!llmStarted && confidence > 0.85 && speech_final) ||
+          (confidence > 0.85 && speech_final) ||
           // Condition 3: Long stable interim with punctuation
-          (!llmStarted && text.length > 15 && /[.!?]$/.test(text) && confidence > 0.8)
+          (text.length > 15 && /[.!?]$/.test(text) && confidence > 0.8)
         )
 
-        if (shouldTrigger && !llmStarted && !aiSpeaking && transcriptBuffer.trim().length > 0) {
-          llmStarted = true
+        if (shouldTrigger && transcriptBuffer.trim().length > 0) {
+          // Lock immediately to prevent concurrent triggers
+          isProcessing = true
+          lastProcessedText = text
+
           console.log(`🚀 Triggering LLM (is_final: ${is_final}, conf: ${confidence.toFixed(2)})`)
 
           // Send transcript to frontend
           socket.emit('transcript', { text: transcriptBuffer })
+
+          // Capture the text to process
+          const textToProcess = transcriptBuffer
+
+          // Clear buffer immediately to prevent re-processing
+          transcriptBuffer = ''
 
           // Create abortable pipeline controller
           let aborted = false
@@ -184,13 +204,17 @@ io.on('connection', (socket) => {
           aiSpeaking = true
 
           // Start pipelined response
-          handleUserMessage(socket, session, transcriptBuffer, currentPipeline)
+          handleUserMessage(socket, session, textToProcess, currentPipeline)
             .finally(() => {
               // Reset for next turn
-              llmStarted = false
+              isProcessing = false
               aiSpeaking = false
-              transcriptBuffer = ''
               currentPipeline = null
+
+              // Only clear lastProcessedText if not aborted (barge-in)
+              if (!aborted) {
+                lastProcessedText = ''
+              }
             })
         }
       })
