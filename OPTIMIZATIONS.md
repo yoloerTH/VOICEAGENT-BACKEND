@@ -49,5 +49,5 @@
 1. Push all changes to GitHub
 2. Railway will auto-deploy
 3. Update Netlify environment variable:
-   - `VITE_SERVER_URL=https://voice-ai-backend-production-7a80.up.railway.app`
+   - `VITE_SERVER_URL=https://voiceagent-backend-production-b679.up.railway.app`
 4. Test the connection!

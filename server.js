@@ -29,7 +29,7 @@ const corsOptions = {
   origin: function (origin, callback) {
     const allowedOrigins = [
       'https://voicecallai.netlify.app',
-      'https://voice-ai-backend-production-7a80.up.railway.app',
+      'https://voiceagent-backend-production-b679.up.railway.app',
       'http://localhost:5173',
       'http://localhost:3000'
     ]
@@ -53,7 +53,7 @@ const io = new Server(httpServer, {
   cors: {
     origin: [
       'https://voicecallai.netlify.app',
-      'https://voice-ai-backend-production-7a80.up.railway.app',
+      'https://voiceagent-backend-production-b679.up.railway.app',
       'http://localhost:5173',
       'http://localhost:3000'
     ],
@@ -263,6 +263,6 @@ httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`)
   console.log(`📡 WebSocket server ready`)
   console.log(`🤖 LLM Provider: ${process.env.LLM_PROVIDER || 'openai'}`)
-  console.log(`🌐 CORS enabled for: https://voicecallai.netlify.app, https://voice-ai-backend-production-7a80.up.railway.app, http://localhost:5173, http://localhost:3000`)
+  console.log(`🌐 CORS enabled for: https://voicecallai.netlify.app, https://voiceagent-backend-production-b679.up.railway.app, http://localhost:5173, http://localhost:3000`)
   console.log(`✅ Server ready to accept connections`)
 })
