@@ -34,6 +34,9 @@ export class WebhookService {
 
     } catch (error) {
       console.error('❌ Failed to send booking to n8n:', error.message)
+      console.error('❌ Webhook URL:', this.webhookUrl)
+      console.error('❌ Status:', error.response?.status)
+      console.error('❌ Response:', error.response?.data)
       throw new Error('Failed to register booking')
     }
   }
