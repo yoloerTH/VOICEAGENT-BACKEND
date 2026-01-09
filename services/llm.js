@@ -79,22 +79,94 @@ Response structure:
 - Pause between thoughts so the user can respond
 - Ask clarifying questions when helpful
 
-Your goal is helping customers understand our platform, answering questions, and connecting them with our team for demos.`
+Your capabilities:
+- Answer questions about Apex Solutions
+- Help customers understand our platform
+- Book appointments and demos using the book_appointment function
+
+When booking:
+- First say "Hold on, let me register that for you"
+- Then call the book_appointment function with the details
+- After booking, confirm what was registered`
     }
 
     const messages = [systemPrompt, ...conversationHistory]
+
+    // Define available tools
+    const tools = [
+      {
+        type: 'function',
+        function: {
+          name: 'book_appointment',
+          description: 'Books an appointment or demo for a customer. Use this when the user wants to schedule, book, or register for something.',
+          parameters: {
+            type: 'object',
+            properties: {
+              name: {
+                type: 'string',
+                description: 'Customer name. Extract from conversation context or ask if not provided.'
+              },
+              datetime: {
+                type: 'string',
+                description: 'The requested date and time in natural language (e.g., "Tomorrow at 3pm", "Next Monday 2pm", "January 15th at 10am")'
+              },
+              details: {
+                type: 'string',
+                description: 'What they want to book (e.g., "Product demo", "Consultation", "Sales call")'
+              }
+            },
+            required: ['datetime', 'details']
+          }
+        }
+      }
+    ]
 
     const stream = await this.client.chat.completions.create({
       model: this.model,
       messages: messages,
       max_completion_tokens: 333,
-      stream: true
+      stream: true,
+      tools: tools,
+      tool_choice: 'auto'
     })
 
+    let toolCall = null
+    let toolCallId = null
+    let toolName = null
+    let argsBuffer = ''
+
     for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content
-      if (content) {
-        yield content
+      const delta = chunk.choices[0]?.delta
+
+      // Handle tool calls
+      if (delta?.tool_calls) {
+        const tc = delta.tool_calls[0]
+
+        if (tc.id) {
+          toolCallId = tc.id
+          toolName = tc.function?.name
+        }
+
+        if (tc.function?.arguments) {
+          argsBuffer += tc.function.arguments
+        }
+      }
+
+      // Handle regular content
+      if (delta?.content) {
+        yield delta.content
+      }
+
+      // Check if we're done and have a tool call
+      if (chunk.choices[0]?.finish_reason === 'tool_calls' && toolCallId) {
+        toolCall = {
+          id: toolCallId,
+          name: toolName,
+          arguments: argsBuffer
+        }
+
+        // Yield special marker with tool call info
+        yield JSON.stringify({ __tool_call: toolCall })
       }
     }
   }

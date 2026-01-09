@@ -7,6 +7,7 @@ import { readFileSync, existsSync } from 'fs'
 import { DeepgramService } from './services/deepgram.js'
 import { LLMService } from './services/llm.js'
 import { CartesiaService } from './services/cartesia.js'
+import { WebhookService } from './services/webhook.js'
 import { AsyncQueue } from './utils/async-queue.js'
 import { SentenceDetector } from './utils/sentence-detector.js'
 
@@ -97,6 +98,7 @@ io.on('connection', (socket) => {
       deepgram: null,
       llm: new LLMService(),
       cartesia: new CartesiaService(),
+      webhook: new WebhookService(),
       isCallActive: false,
       lastActivity: Date.now()
     }
@@ -314,6 +316,7 @@ async function handleUserMessage(socket, session, userMessage, pipeline = null) 
     const ttsQueue = new AsyncQueue()
     const detector = new SentenceDetector()
     let fullResponse = ''
+    let toolCallDetected = null
 
     // Start TTS worker in parallel (non-blocking)
     const ttsWorkerPromise = startTTSWorker(socket, session, ttsQueue, pipeline)
@@ -326,6 +329,20 @@ async function handleUserMessage(socket, session, userMessage, pipeline = null) 
         if (pipeline && pipeline.isAborted()) {
           console.log('⚠️ Pipeline aborted during LLM streaming')
           break
+        }
+
+        // Check if this chunk contains a tool call
+        if (chunk.includes('__tool_call')) {
+          try {
+            const toolData = JSON.parse(chunk)
+            if (toolData.__tool_call) {
+              toolCallDetected = toolData.__tool_call
+              console.log('🔧 Tool call detected:', toolCallDetected.name)
+              continue  // Skip this chunk, don't add to response
+            }
+          } catch (e) {
+            // Not a tool call, process normally
+          }
         }
 
         fullResponse += chunk
@@ -373,7 +390,70 @@ async function handleUserMessage(socket, session, userMessage, pipeline = null) 
       await ttsWorkerPromise
     }
 
-    // Only add to history if not aborted
+    // Handle tool call if detected
+    if (toolCallDetected && (!pipeline || !pipeline.isAborted())) {
+      console.log('🔧 Executing tool:', toolCallDetected.name)
+
+      if (toolCallDetected.name === 'book_appointment') {
+        try {
+          const args = JSON.parse(toolCallDetected.arguments)
+          console.log('📅 Booking appointment:', args)
+
+          // Send webhook to n8n
+          const result = await session.webhook.sendBooking(args)
+
+          // Add tool result to conversation history
+          session.conversationHistory.push({
+            role: 'assistant',
+            content: fullResponse,
+            tool_calls: [{
+              id: toolCallDetected.id,
+              type: 'function',
+              function: {
+                name: toolCallDetected.name,
+                arguments: toolCallDetected.arguments
+              }
+            }]
+          })
+
+          session.conversationHistory.push({
+            role: 'tool',
+            tool_call_id: toolCallDetected.id,
+            content: JSON.stringify({ success: true, message: 'Booking registered successfully' })
+          })
+
+          console.log('✅ Booking sent to n8n successfully')
+
+          // Generate confirmation response
+          const confirmationResponse = `All set! I've registered your appointment for ${args.datetime}.`
+
+          // Send confirmation to user
+          socket.emit('ai-response', { text: confirmationResponse, partial: true })
+
+          // Generate confirmation audio
+          const confirmAudio = await session.cartesia.textToSpeech(confirmationResponse)
+          socket.emit('audio-response', confirmAudio)
+
+          // Add confirmation to history
+          session.conversationHistory.push({
+            role: 'assistant',
+            content: confirmationResponse
+          })
+
+        } catch (error) {
+          console.error('❌ Booking failed:', error)
+          const errorMsg = "Sorry, I couldn't complete the booking. Please try again."
+          socket.emit('ai-response', { text: errorMsg, partial: true })
+          const errorAudio = await session.cartesia.textToSpeech(errorMsg)
+          socket.emit('audio-response', errorAudio)
+        }
+      }
+
+      socket.emit('status', 'Listening...')
+      return  // Exit early since we handled everything
+    }
+
+    // Only add to history if not aborted and no tool call
     if (!pipeline || !pipeline.isAborted()) {
       // Add full response to conversation history
       session.conversationHistory.push({
