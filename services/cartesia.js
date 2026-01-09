@@ -23,7 +23,7 @@ export class CartesiaService {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model_id: 'sonic-turbo',
+          model_id: 'sonic-3',
           transcript: text,
           voice: {
             mode: 'id',
