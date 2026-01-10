@@ -20,15 +20,7 @@ export class LLMService {
       throw new Error('OPENAI_API_KEY is not set')
     }
 
-    // Configure OpenAI client with timeout and retry settings for reliability
-    this.client = new OpenAI({
-      apiKey,
-      timeout: 30000,  // 30 second timeout
-      maxRetries: 2,   // Retry failed requests up to 2 times
-      httpAgent: {
-        keepAlive: true  // Reuse connections for better performance
-      }
-    })
+    this.client = new OpenAI({ apiKey })
     this.model = process.env.OPENAI_MODEL || 'gpt-5.1-chat-latest'
   }
 
@@ -131,28 +123,21 @@ When user wants to book:
       }
     ]
 
-    let stream
-    try {
-      stream = await this.client.chat.completions.create({
-        model: this.model,
-        messages: messages,
-        max_completion_tokens: 333,
-        stream: true,
-        tools: tools,
-        tool_choice: 'auto'
-      })
-    } catch (error) {
-      console.error('❌ Failed to create OpenAI stream:', error.message)
-      throw new Error('Failed to connect to AI service')
-    }
+    const stream = await this.client.chat.completions.create({
+      model: this.model,
+      messages: messages,
+      max_completion_tokens: 333,
+      stream: true,
+      tools: tools,
+      tool_choice: 'auto'
+    })
 
     let toolCall = null
     let toolCallId = null
     let toolName = null
     let argsBuffer = ''
 
-    try {
-      for await (const chunk of stream) {
+    for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta
       const finishReason = chunk.choices[0]?.finish_reason
 
@@ -191,10 +176,6 @@ When user wants to book:
       } else if (finishReason) {
         console.log('✅ Stream finished with reason:', finishReason)
       }
-      }
-    } catch (error) {
-      console.error('❌ Error during OpenAI streaming:', error.message)
-      throw new Error('AI streaming interrupted')
     }
   }
 

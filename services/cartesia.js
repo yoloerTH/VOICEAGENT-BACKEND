@@ -11,21 +11,16 @@ export class CartesiaService {
     this.voiceId = process.env.CARTESIA_VOICE_ID || 'e07c00bc-4134-4eae-9ea4-1a55fb45746b'
   }
 
-  async textToSpeech(text, retries = 2) {
+  async textToSpeech(text) {
     try {
       console.log('Generating speech with Cartesia...')
-
-      // Create abort controller for timeout
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 15000)  // 15 second timeout
 
       const response = await fetch(this.apiUrl, {
         method: 'POST',
         headers: {
           'Cartesia-Version': '2025-04-16',
           'X-API-Key': this.apiKey,
-          'Content-Type': 'application/json',
-          'Connection': 'keep-alive'  // Reuse connections
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           model_id: 'sonic-3',
@@ -39,11 +34,8 @@ export class CartesiaService {
             encoding: 'pcm_s16le',
             sample_rate: 16000
           }
-        }),
-        signal: controller.signal
+        })
       })
-
-      clearTimeout(timeout)
 
       if (!response.ok) {
         const errorText = await response.text()
@@ -60,15 +52,8 @@ export class CartesiaService {
       return base64Audio
 
     } catch (error) {
-      // Handle timeout and network errors with retry
-      if (retries > 0 && (error.name === 'AbortError' || error.code === 'ECONNRESET')) {
-        console.warn(`⚠️ Cartesia request failed, retrying... (${retries} attempts left)`)
-        await new Promise(resolve => setTimeout(resolve, 1000))  // Wait 1s before retry
-        return this.textToSpeech(text, retries - 1)
-      }
-
-      console.error('❌ Cartesia error:', error.message)
-      throw new Error('Failed to generate speech')
+      console.error('Cartesia error:', error.message)
+      throw error
     }
   }
 }

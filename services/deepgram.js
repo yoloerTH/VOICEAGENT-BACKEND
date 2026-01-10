@@ -12,23 +12,21 @@ export class DeepgramService {
     this.transcriptCallback = null
     this.errorCallback = null
     this.audioSent = false
-    this.keepAliveInterval = null
   }
 
   async connect() {
     try {
       console.log('Connecting to Deepgram...')
 
-      // Create live transcription connection - optimized for speed and reliability
+      // Create live transcription connection - let Deepgram auto-detect format
       this.connection = this.client.listen.live({
         model: 'nova-3',
         language: 'en',
-        punctuate: false,  // Disabled for speed (we handle sentences ourselves)
-        smart_format: false,  // Disabled for speed (no need for formatting)
+        punctuate: true,
+        smart_format: true,
         vad_events: true,
         interim_results: true,
-        endpointing: 200,  // Reduced from 300ms for faster finalization
-        utterance_end_ms: 1000  // End utterance after 1s of silence
+        endpointing: 300  // ms of silence before finalizing
       })
 
       // Setup event handlers
@@ -70,14 +68,6 @@ export class DeepgramService {
       this.connection.on(LiveTranscriptionEvents.Metadata, (metadata) => {
         console.log('Deepgram metadata:', metadata)
       })
-
-      // Add warning handler for connection issues
-      this.connection.on(LiveTranscriptionEvents.Warning, (warning) => {
-        console.warn('⚠️ Deepgram warning:', warning)
-      })
-
-      // Monitor connection health with keep-alive
-      this.setupKeepAlive()
 
       // Wait for connection to be ready with timeout
       await Promise.race([
@@ -132,28 +122,8 @@ export class DeepgramService {
     }
   }
 
-  setupKeepAlive() {
-    // Send keep-alive signal every 5 seconds to maintain connection
-    this.keepAliveInterval = setInterval(() => {
-      if (this.connection && this.connection.getReadyState() === 1) {
-        try {
-          // Send empty buffer to keep connection alive
-          this.connection.keepAlive()
-        } catch (error) {
-          console.warn('Keep-alive failed:', error.message)
-        }
-      }
-    }, 5000)
-  }
-
   disconnect() {
     try {
-      // Clear keep-alive interval
-      if (this.keepAliveInterval) {
-        clearInterval(this.keepAliveInterval)
-        this.keepAliveInterval = null
-      }
-
       if (this.connection) {
         console.log('Disconnecting from Deepgram...')
         this.connection.finish()
@@ -170,10 +140,5 @@ export class DeepgramService {
 
   onError(callback) {
     this.errorCallback = callback
-  }
-
-  // Check if connection is healthy
-  isConnected() {
-    return this.connection && this.connection.getReadyState() === 1
   }
 }
