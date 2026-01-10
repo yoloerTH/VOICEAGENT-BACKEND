@@ -310,6 +310,15 @@ async function handleUserMessage(socket, session, userMessage, pipeline = null) 
       content: userMessage
     })
 
+    // Trim conversation history to prevent memory buildup
+    // Keep first message (greeting) + last 20 messages (10 exchanges)
+    if (session.conversationHistory.length > 21) {
+      const firstMessage = session.conversationHistory[0]
+      const recentMessages = session.conversationHistory.slice(-20)
+      session.conversationHistory = [firstMessage, ...recentMessages]
+      console.log(`📝 Trimmed conversation history to ${session.conversationHistory.length} messages`)
+    }
+
     socket.emit('status', 'AI is thinking...')
 
     // Create TTS queue for decoupled processing
