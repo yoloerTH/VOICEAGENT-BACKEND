@@ -171,9 +171,9 @@ io.on('connection', (socket) => {
           // Condition 1: Final transcript (guaranteed)
           is_final ||
           // Condition 2: High confidence interim with speech endpoint
-          (confidence > 0.85 && speech_final) ||
+          (confidence > 0.80 && speech_final) ||
           // Condition 3: Long stable interim with punctuation
-          (text.length > 15 && /[.!?]$/.test(text) && confidence > 0.8)
+          (text.length > 15 && /[.!?]$/.test(text) && confidence > 0.75)
         )
 
         if (shouldTrigger && transcriptBuffer.trim().length > 0) {
