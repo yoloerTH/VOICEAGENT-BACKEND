@@ -18,18 +18,15 @@ export class DeepgramService {
     try {
       console.log('Connecting to Deepgram...')
 
-      // Create live transcription connection - optimized for speed
+      // Create live transcription connection - let Deepgram auto-detect format
       this.connection = this.client.listen.live({
         model: 'nova-3',
         language: 'en',
-        punctuate: false,  // Disabled for speed (we don't need it for triggering)
-        smart_format: false,  // Disabled for speed (removes formatting overhead)
+        punctuate: true,
+        smart_format: true,
         vad_events: true,
         interim_results: true,
-        endpointing: 150,  // Aggressive: 150ms silence before finalizing
-        encoding: 'linear16',  // Explicit encoding for better performance
-        sample_rate: 16000,  // Match frontend sample rate
-        channels: 1  // Mono audio
+        endpointing: 300  // ms of silence before finalizing
       })
 
       // Setup event handlers
