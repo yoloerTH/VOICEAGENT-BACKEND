@@ -105,6 +105,10 @@ export class DeepgramService {
     }
   }
 
+  getReadyState() {
+    return this.connection ? this.connection.getReadyState() : -1
+  }
+
   send(audioData) {
     try {
       if (this.connection && this.connection.getReadyState() === 1) {

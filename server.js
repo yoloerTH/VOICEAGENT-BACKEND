@@ -255,6 +255,9 @@ io.on('connection', (socket) => {
 
   // Handle audio stream from client
   let audioChunkCount = 0
+  let audioBuffer = [] // Buffer for audio that arrives during Deepgram connection
+  let deepgramReady = false
+
   socket.on('audio-stream', async (audioData) => {
     audioChunkCount++
     if (audioChunkCount === 1) {
@@ -262,11 +265,42 @@ io.on('connection', (socket) => {
     }
 
     if (session.deepgram && session.isCallActive) {
-      try {
-        // Send audio to Deepgram for transcription
-        session.deepgram.send(audioData)
-      } catch (error) {
-        console.error(`Error processing audio [${socket.id}]:`, error)
+      // Check if Deepgram WebSocket is actually open (state 1 = OPEN)
+      const connectionState = session.deepgram.getReadyState()
+
+      if (connectionState === 1) {
+        // Deepgram is open - flush any buffered audio first
+        if (audioBuffer.length > 0 && !deepgramReady) {
+          console.log(`📦 Deepgram ready! Flushing ${audioBuffer.length} buffered audio chunks`)
+          deepgramReady = true
+
+          for (const bufferedAudio of audioBuffer) {
+            try {
+              session.deepgram.send(bufferedAudio)
+            } catch (error) {
+              console.error(`Error sending buffered audio:`, error)
+            }
+          }
+          audioBuffer = []
+        }
+
+        // Send current audio chunk
+        try {
+          session.deepgram.send(audioData)
+        } catch (error) {
+          console.error(`Error processing audio [${socket.id}]:`, error)
+        }
+      } else {
+        // Deepgram still connecting (state 0) - buffer the audio
+        if (audioBuffer.length === 0) {
+          console.log(`⏳ Deepgram connecting (state: ${connectionState}), buffering audio...`)
+        }
+        audioBuffer.push(audioData)
+
+        // Safety: limit buffer to last 20 chunks (~5 seconds)
+        if (audioBuffer.length > 20) {
+          audioBuffer.shift()
+        }
       }
     } else {
       if (audioChunkCount === 1) {
