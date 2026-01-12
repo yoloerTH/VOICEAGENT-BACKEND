@@ -230,6 +230,23 @@ io.on('connection', (socket) => {
       // Start Deepgram connection
       await session.deepgram.connect()
 
+      // IMMEDIATELY flush any buffered audio that arrived during connection
+      if (audioBuffer.length > 0) {
+        console.log(`📦 Deepgram connected! Flushing ${audioBuffer.length} buffered audio chunks from startup`)
+        deepgramReady = true
+
+        for (const bufferedAudio of audioBuffer) {
+          try {
+            session.deepgram.send(bufferedAudio)
+          } catch (error) {
+            console.error(`Error sending buffered audio [${socket.id}]:`, error)
+          }
+        }
+        audioBuffer = [] // Clear buffer
+      } else {
+        deepgramReady = true
+      }
+
       socket.emit('status', 'Connected - Start speaking!')
 
       // Send initial greeting
