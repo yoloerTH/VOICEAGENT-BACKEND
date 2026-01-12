@@ -255,6 +255,9 @@ io.on('connection', (socket) => {
 
   // Handle audio stream from client
   let audioChunkCount = 0
+  let audioBuffer = [] // Buffer for audio received before Deepgram is ready
+  let deepgramReady = false
+
   socket.on('audio-stream', async (audioData) => {
     audioChunkCount++
     if (audioChunkCount === 1) {
@@ -266,11 +269,42 @@ io.on('connection', (socket) => {
     }
 
     if (session.deepgram && session.isCallActive) {
-      try {
-        // Send audio to Deepgram for transcription
-        session.deepgram.send(audioData)
-      } catch (error) {
-        console.error(`Error processing audio [${socket.id}]:`, error)
+      // Check if Deepgram is actually ready (state 1 = OPEN)
+      const connectionState = session.deepgram.getReadyState()
+
+      if (connectionState === 1) {
+        // Deepgram is ready - send buffered audio first if any
+        if (audioBuffer.length > 0 && !deepgramReady) {
+          console.log(`📦 Deepgram now ready! Flushing ${audioBuffer.length} buffered audio chunks`)
+          deepgramReady = true
+
+          for (const bufferedAudio of audioBuffer) {
+            try {
+              session.deepgram.send(bufferedAudio)
+            } catch (error) {
+              console.error(`Error sending buffered audio [${socket.id}]:`, error)
+            }
+          }
+          audioBuffer = [] // Clear buffer
+        }
+
+        // Send current audio
+        try {
+          session.deepgram.send(audioData)
+        } catch (error) {
+          console.error(`Error processing audio [${socket.id}]:`, error)
+        }
+      } else {
+        // Deepgram not ready yet - buffer the audio
+        if (audioBuffer.length === 0) {
+          console.log(`⏳ Deepgram still connecting (state: ${connectionState}), buffering audio...`)
+        }
+        audioBuffer.push(audioData)
+
+        // Limit buffer size to prevent memory issues (keep last 5 seconds ~= 20 chunks)
+        if (audioBuffer.length > 20) {
+          audioBuffer.shift() // Remove oldest
+        }
       }
     } else {
       if (audioChunkCount % 10 === 0) { // Log every 10th failed attempt
