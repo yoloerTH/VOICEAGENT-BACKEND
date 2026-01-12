@@ -259,6 +259,10 @@ io.on('connection', (socket) => {
     audioChunkCount++
     if (audioChunkCount === 1) {
       console.log(`📥 Receiving audio from client [${socket.id}]`)
+      console.log(`   Audio data type: ${typeof audioData}`)
+      console.log(`   Audio data size: ${audioData?.size || audioData?.byteLength || audioData?.length || 'unknown'}`)
+      console.log(`   Session active: ${session.isCallActive}`)
+      console.log(`   Deepgram ready: ${session.deepgram ? 'yes' : 'no'}`)
     }
 
     if (session.deepgram && session.isCallActive) {
@@ -269,15 +273,16 @@ io.on('connection', (socket) => {
         console.error(`Error processing audio [${socket.id}]:`, error)
       }
     } else {
-      if (audioChunkCount === 1) {
-        console.warn(`⚠️ Received audio but call not active or Deepgram not ready`)
+      if (audioChunkCount % 10 === 0) { // Log every 10th failed attempt
+        console.warn(`⚠️ Received audio but call not active (${session.isCallActive}) or Deepgram not ready (${session.deepgram ? 'ready' : 'null'})`)
       }
     }
   })
 
   // Handle call end
   socket.on('call-end', () => {
-    console.log(`Call ended: ${socket.id}`)
+    console.log(`📞 Call ended by client: ${socket.id}`)
+    console.trace('Call end stack trace') // This will show us who called it
     session.isCallActive = false
     session.lastActivity = Date.now()
 
