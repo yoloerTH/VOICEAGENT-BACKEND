@@ -12,21 +12,25 @@ export class DeepgramService {
     this.transcriptCallback = null
     this.errorCallback = null
     this.audioSent = false
+    this.keepaliveInterval = null
   }
 
   async connect() {
     try {
       console.log('Connecting to Deepgram...')
 
-      // Create live transcription connection - let Deepgram auto-detect format
+      // Create live transcription connection - optimized for speed
       this.connection = this.client.listen.live({
         model: 'nova-3',
         language: 'en',
-        punctuate: true,
-        smart_format: true,
+        punctuate: false,  // Disabled for speed (we don't need it for triggering)
+        smart_format: false,  // Disabled for speed (removes formatting overhead)
         vad_events: true,
         interim_results: true,
-        endpointing: 300  // ms of silence before finalizing
+        endpointing: 150,  // Aggressive: 150ms silence before finalizing
+        encoding: 'linear16',  // Explicit encoding for better performance
+        sample_rate: 16000,  // Match frontend sample rate
+        channels: 1  // Mono audio
       })
 
       // Setup event handlers
@@ -91,6 +95,16 @@ export class DeepgramService {
 
       console.log('✅ Deepgram connection established successfully')
 
+      // Start keepalive to prevent connection from closing during silence
+      // Send empty buffer every 5 seconds to keep connection alive
+      this.keepaliveInterval = setInterval(() => {
+        if (this.connection && this.connection.getReadyState() === 1) {
+          // Send small silence packet (1 sample of silence)
+          const silencePacket = Buffer.alloc(2) // 2 bytes = 1 sample at 16-bit
+          this.connection.send(silencePacket)
+        }
+      }, 5000) // Every 5 seconds
+
     } catch (error) {
       console.error('❌ Failed to connect to Deepgram:', error)
 
@@ -124,6 +138,12 @@ export class DeepgramService {
 
   disconnect() {
     try {
+      // Clear keepalive interval
+      if (this.keepaliveInterval) {
+        clearInterval(this.keepaliveInterval)
+        this.keepaliveInterval = null
+      }
+
       if (this.connection) {
         console.log('Disconnecting from Deepgram...')
         this.connection.finish()
