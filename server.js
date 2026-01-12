@@ -230,23 +230,6 @@ io.on('connection', (socket) => {
       // Start Deepgram connection
       await session.deepgram.connect()
 
-      // IMMEDIATELY flush any buffered audio that arrived during connection
-      if (audioBuffer.length > 0) {
-        console.log(`📦 Deepgram connected! Flushing ${audioBuffer.length} buffered audio chunks from startup`)
-        deepgramReady = true
-
-        for (const bufferedAudio of audioBuffer) {
-          try {
-            session.deepgram.send(bufferedAudio)
-          } catch (error) {
-            console.error(`Error sending buffered audio [${socket.id}]:`, error)
-          }
-        }
-        audioBuffer = [] // Clear buffer
-      } else {
-        deepgramReady = true
-      }
-
       socket.emit('status', 'Connected - Start speaking!')
 
       // Send initial greeting
@@ -272,68 +255,29 @@ io.on('connection', (socket) => {
 
   // Handle audio stream from client
   let audioChunkCount = 0
-  let audioBuffer = [] // Buffer for audio received before Deepgram is ready
-  let deepgramReady = false
-
   socket.on('audio-stream', async (audioData) => {
     audioChunkCount++
     if (audioChunkCount === 1) {
       console.log(`📥 Receiving audio from client [${socket.id}]`)
-      console.log(`   Audio data type: ${typeof audioData}`)
-      console.log(`   Audio data size: ${audioData?.size || audioData?.byteLength || audioData?.length || 'unknown'}`)
-      console.log(`   Session active: ${session.isCallActive}`)
-      console.log(`   Deepgram ready: ${session.deepgram ? 'yes' : 'no'}`)
     }
 
     if (session.deepgram && session.isCallActive) {
-      // Check if Deepgram is actually ready (state 1 = OPEN)
-      const connectionState = session.deepgram.getReadyState()
-
-      if (connectionState === 1) {
-        // Deepgram is ready - send buffered audio first if any
-        if (audioBuffer.length > 0 && !deepgramReady) {
-          console.log(`📦 Deepgram now ready! Flushing ${audioBuffer.length} buffered audio chunks`)
-          deepgramReady = true
-
-          for (const bufferedAudio of audioBuffer) {
-            try {
-              session.deepgram.send(bufferedAudio)
-            } catch (error) {
-              console.error(`Error sending buffered audio [${socket.id}]:`, error)
-            }
-          }
-          audioBuffer = [] // Clear buffer
-        }
-
-        // Send current audio
-        try {
-          session.deepgram.send(audioData)
-        } catch (error) {
-          console.error(`Error processing audio [${socket.id}]:`, error)
-        }
-      } else {
-        // Deepgram not ready yet - buffer the audio
-        if (audioBuffer.length === 0) {
-          console.log(`⏳ Deepgram still connecting (state: ${connectionState}), buffering audio...`)
-        }
-        audioBuffer.push(audioData)
-
-        // Limit buffer size to prevent memory issues (keep last 5 seconds ~= 20 chunks)
-        if (audioBuffer.length > 20) {
-          audioBuffer.shift() // Remove oldest
-        }
+      try {
+        // Send audio to Deepgram for transcription
+        session.deepgram.send(audioData)
+      } catch (error) {
+        console.error(`Error processing audio [${socket.id}]:`, error)
       }
     } else {
-      if (audioChunkCount % 10 === 0) { // Log every 10th failed attempt
-        console.warn(`⚠️ Received audio but call not active (${session.isCallActive}) or Deepgram not ready (${session.deepgram ? 'ready' : 'null'})`)
+      if (audioChunkCount === 1) {
+        console.warn(`⚠️ Received audio but call not active or Deepgram not ready`)
       }
     }
   })
 
   // Handle call end
   socket.on('call-end', () => {
-    console.log(`📞 Call ended by client: ${socket.id}`)
-    console.trace('Call end stack trace') // This will show us who called it
+    console.log(`Call ended: ${socket.id}`)
     session.isCallActive = false
     session.lastActivity = Date.now()
 

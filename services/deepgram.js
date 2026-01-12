@@ -12,7 +12,6 @@ export class DeepgramService {
     this.transcriptCallback = null
     this.errorCallback = null
     this.audioSent = false
-    this.keepaliveInterval = null
   }
 
   async connect() {
@@ -77,15 +76,11 @@ export class DeepgramService {
       await Promise.race([
         new Promise((resolve, reject) => {
           const openHandler = () => {
-            if (this.connection) {
-              this.connection.off(LiveTranscriptionEvents.Error, errorHandler)
-            }
+            this.connection.off(LiveTranscriptionEvents.Error, errorHandler)
             resolve()
           }
           const errorHandler = (error) => {
-            if (this.connection) {
-              this.connection.off(LiveTranscriptionEvents.Open, openHandler)
-            }
+            this.connection.off(LiveTranscriptionEvents.Open, openHandler)
             reject(error)
           }
 
@@ -99,16 +94,6 @@ export class DeepgramService {
 
       console.log('✅ Deepgram connection established successfully')
 
-      // Start keepalive to prevent connection from closing during silence
-      // Send empty buffer every 5 seconds to keep connection alive
-      this.keepaliveInterval = setInterval(() => {
-        if (this.connection && this.connection.getReadyState() === 1) {
-          // Send small silence packet (1 sample of silence)
-          const silencePacket = Buffer.alloc(2) // 2 bytes = 1 sample at 16-bit
-          this.connection.send(silencePacket)
-        }
-      }, 5000) // Every 5 seconds
-
     } catch (error) {
       console.error('❌ Failed to connect to Deepgram:', error)
 
@@ -121,10 +106,6 @@ export class DeepgramService {
 
       throw new Error(`Deepgram connection failed: ${error.message || 'Unknown error'}`)
     }
-  }
-
-  getReadyState() {
-    return this.connection ? this.connection.getReadyState() : -1
   }
 
   send(audioData) {
@@ -146,23 +127,10 @@ export class DeepgramService {
 
   disconnect() {
     try {
-      // Clear keepalive interval first
-      if (this.keepaliveInterval) {
-        clearInterval(this.keepaliveInterval)
-        this.keepaliveInterval = null
-      }
-
-      // Store reference and clear immediately to prevent race conditions
-      const connection = this.connection
-      this.connection = null
-
-      if (connection) {
+      if (this.connection) {
         console.log('Disconnecting from Deepgram...')
-        try {
-          connection.finish()
-        } catch (err) {
-          console.warn('Error calling finish on Deepgram connection:', err.message)
-        }
+        this.connection.finish()
+        this.connection = null
       }
     } catch (error) {
       console.error('Error disconnecting from Deepgram:', error)
