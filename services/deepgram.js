@@ -77,11 +77,15 @@ export class DeepgramService {
       await Promise.race([
         new Promise((resolve, reject) => {
           const openHandler = () => {
-            this.connection.off(LiveTranscriptionEvents.Error, errorHandler)
+            if (this.connection) {
+              this.connection.off(LiveTranscriptionEvents.Error, errorHandler)
+            }
             resolve()
           }
           const errorHandler = (error) => {
-            this.connection.off(LiveTranscriptionEvents.Open, openHandler)
+            if (this.connection) {
+              this.connection.off(LiveTranscriptionEvents.Open, openHandler)
+            }
             reject(error)
           }
 
@@ -138,16 +142,23 @@ export class DeepgramService {
 
   disconnect() {
     try {
-      // Clear keepalive interval
+      // Clear keepalive interval first
       if (this.keepaliveInterval) {
         clearInterval(this.keepaliveInterval)
         this.keepaliveInterval = null
       }
 
-      if (this.connection) {
+      // Store reference and clear immediately to prevent race conditions
+      const connection = this.connection
+      this.connection = null
+
+      if (connection) {
         console.log('Disconnecting from Deepgram...')
-        this.connection.finish()
-        this.connection = null
+        try {
+          connection.finish()
+        } catch (err) {
+          console.warn('Error calling finish on Deepgram connection:', err.message)
+        }
       }
     } catch (error) {
       console.error('Error disconnecting from Deepgram:', error)
